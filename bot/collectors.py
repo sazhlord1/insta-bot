@@ -21,8 +21,21 @@ IG_LINK_RE = re.compile(r"instagram\.com/(?:[\w.]+/)?(?:reel|reels|p|tv)/([A-Za-
 IG_DEEPLINK_RE = re.compile(r"media\?id=(\d+)")
 YT_COOKIE_FILE = Config.DATA_DIR / "yt_cookies.txt"
 
+
+def write_yt_cookies(text: str) -> bool:
+    """Save a Netscape cookies.txt for yt-dlp. Returns False if it doesn't
+    look like YouTube cookies."""
+    text = text.replace("\r\n", "\n").strip() + "\n"
+    if "youtube.com" not in text:
+        return False
+    if not text.startswith("# Netscape") and not text.startswith("# HTTP Cookie File"):
+        text = "# Netscape HTTP Cookie File\n" + text
+    YT_COOKIE_FILE.write_text(text)
+    return True
+
+
 if Config.YT_COOKIES.strip():
-    YT_COOKIE_FILE.write_text(Config.YT_COOKIES.replace("\\n", "\n"))
+    write_yt_cookies(Config.YT_COOKIES.replace("\\n", "\n"))
 
 
 class Report:
@@ -181,7 +194,8 @@ async def fetch_youtube(db: DB, limit: int, report: Report) -> None:
             log.exception("YouTube failed for %s", label)
             msg = str(exc)
             if "Sign in to confirm" in msg or "bot" in msg.lower():
-                msg = "یوتیوب سرور رو بلاک کرده؛ YT_COOKIES یا YT_PROXY رو تنظیم کن."
+                msg = ("یوتیوب سرور رو بلاک کرده. فایل cookies.txt یوتیوب رو برای ربات بفرست "
+                       "(راهنما: /yt_help).")
             report.add(f"• {label}: خطا — {msg[:200]}")
         await _pause()
 

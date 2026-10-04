@@ -67,7 +67,8 @@ HELP = """🤖 <b>راهنمای ربات</b>
 
 <b>اکانت</b>
 /status — وضعیت — /login — ورود دوباره — /code 123456 — فرستادن کد تأیید
-/session sessionid — ورود با کوکی مرورگر (وقتی اینستاگرام ورود رو محدود کرده)"""
+/session sessionid — ورود با کوکی مرورگر (وقتی اینستاگرام ورود رو محدود کرده)
+/yt_help — اگه یوتیوب سرور رو بلاک کرد (فرستادن فایل cookies.txt)"""
 
 
 class BotApp:
@@ -164,15 +165,18 @@ class BotApp:
             "queue": self.cmd_queue, "publish": self.cmd_publish,
             "check_dm": self.cmd_check_dm, "dm": self.cmd_dm,
             "status": self.cmd_status, "login": self.cmd_login, "code": self.cmd_code,
-            "session": self.cmd_session,
+            "session": self.cmd_session, "yt_help": self.cmd_yt_help,
         }
         for name, fn in cmds.items():
             self.app.add_handler(CommandHandler(name, fn, filters=admin))
+        self.app.add_handler(MessageHandler(admin & filters.Document.ALL, self.on_document))
         self.app.add_handler(MessageHandler(admin & filters.TEXT & ~filters.COMMAND, self.on_button))
         self.app.add_handler(CallbackQueryHandler(self.on_callback, pattern=r"^act:"))
 
     async def post_init(self, app: Application) -> None:
         self.ig.attach_loop()
+        if saved_cookies := self.db.get("yt_cookies"):
+            collectors.write_yt_cookies(saved_cookies)
         restored = self.db.reset_interrupted()
         app.create_task(self.publisher.run_forever())
         await app.bot.set_my_commands([
@@ -435,6 +439,34 @@ class BotApp:
                 "مثال: /session 1234567890%3AabcDEF...")
         await self.notify("🔐 دارم با sessionid وارد می‌شم... (پیامت رو برای امنیت پاک کردم)")
         await self.ig.login_with_sessionid(sessionid)
+
+    async def cmd_yt_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        has = "✅ ذخیره شده" if self.db.get("yt_cookies") else "❌ هنوز نفرستادی"
+        await update.message.reply_text(
+            "🍪 کوکی یوتیوب: " + has + "\n\n"
+            "وقتی یوتیوب سرور رو بلاک می‌کنه، ربات با کوکی یه اکانت گوگل دانلود می‌کنه:\n"
+            "1) توی کروم افزونه‌ی «Get cookies.txt LOCALLY» رو نصب کن.\n"
+            "2) یه پنجره‌ی ناشناس (Incognito) باز کن و با یه اکانت گوگل فرعی وارد youtube.com شو.\n"
+            "3) روی آیکون افزونه بزن و Export رو بزن تا فایل cookies.txt دانلود بشه.\n"
+            "4) پنجره‌ی ناشناس رو ببند (از اکانت Sign out نکن).\n"
+            "5) همون فایل رو اینجا برای ربات بفرست.\n\n"
+            "از اکانت اصلی گوگلت استفاده نکن؛ ممکنه محدود بشه.")
+
+    async def on_document(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        doc = update.message.document
+        name = (doc.file_name or "").lower()
+        if not name.endswith(".txt") or doc.file_size > 2_000_000:
+            return await update.message.reply_text("فقط فایل cookies.txt یوتیوب رو قبول می‌کنم.")
+        data = await (await doc.get_file()).download_as_bytearray()
+        text = bytes(data).decode("utf-8", errors="ignore")
+        try:
+            await update.message.delete()  # cookies are as sensitive as a password
+        except Exception:
+            pass
+        if not collectors.write_yt_cookies(text):
+            return await self.notify("❌ این فایل کوکی یوتیوب نیست. راهنما: /yt_help")
+        self.db.set("yt_cookies", text)
+        await self.notify("✅ کوکی یوتیوب ذخیره شد (فایلت رو برای امنیت پاک کردم). دوباره /fetch_posts رو امتحان کن.")
 
     # ---------- housekeeping ----------
     async def login_retry_job(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
