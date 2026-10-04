@@ -186,6 +186,7 @@ class BotApp:
         ])
         app.job_queue.run_repeating(self.dm_job, interval=Config.DM_POLL_MINUTES * 60, first=120)
         app.job_queue.run_repeating(self.cleanup_job, interval=6 * 3600, first=600)
+        app.job_queue.run_repeating(self.login_retry_job, interval=10 * 60, first=10 * 60)
         note = f"\n({restored} آیتمِ نیمه‌کاره برگشت توی صف)" if restored else ""
         await self.notify(f"🤖 ربات روشن شد. دارم وارد اینستاگرام می‌شم...{note}")
         app.create_task(self.ig.login())
@@ -420,6 +421,15 @@ class BotApp:
             pass
 
     # ---------- housekeeping ----------
+    async def login_retry_job(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """After Instagram throttled a login, try again once the cooldown is over."""
+        if self.ig.logged_in or self.ig.awaiting_code:
+            return
+        if self.db.get("ig_login_cooldown_until", 0) and self.ig.cooldown_left() == 0:
+            self.db.set("ig_login_cooldown_until", 0)
+            await self.notify("🔄 مهلت تموم شد؛ دوباره دارم وارد اینستاگرام می‌شم...")
+            await self.ig.login()
+
     async def cleanup_job(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         cutoff = time.time() - REVIEW_EXPIRY_SECONDS
         expired = [i for i in self.db.items_by_status("review") if i["created_at"] < cutoff]

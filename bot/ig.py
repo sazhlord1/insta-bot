@@ -6,6 +6,7 @@ instagrapi is synchronous and not thread-safe, so every call goes through
 import asyncio
 import logging
 import queue
+import time
 from typing import Any, Awaitable, Callable
 
 import pyotp
@@ -13,6 +14,10 @@ from instagrapi import Client
 from instagrapi.exceptions import (
     BadPassword,
     ChallengeRequired,
+    ClientThrottledError,
+    ProxyAddressIsBlocked,
+    RateLimitError,
+    SentryBlock,
     FeedbackRequired,
     LoginRequired,
     PleaseWaitFewMinutes,
@@ -25,6 +30,9 @@ from .db import DB
 log = logging.getLogger(__name__)
 
 CODE_WAIT_SECONDS = 600
+LOGIN_COOLDOWN_SECONDS = 45 * 60  # after Instagram throttles a login, wait this long
+THROTTLE_ERRORS = (ClientThrottledError, RateLimitError, PleaseWaitFewMinutes,
+                   ProxyAddressIsBlocked, SentryBlock)
 DEVICE_KEYS = ("uuids", "device_settings", "user_agent", "mid")
 
 
@@ -106,7 +114,7 @@ class IGService:
         client = self._make_client(saved)
         try:
             self._login_with(client)
-        except (BadPassword, CodeTimeout, ChallengeRequired, TwoFactorRequired):
+        except (BadPassword, CodeTimeout, ChallengeRequired, TwoFactorRequired) + THROTTLE_ERRORS:
             raise
         except Exception as exc:  # stale saved session → fresh login, same device identity
             if not saved:
@@ -125,7 +133,16 @@ class IGService:
         async with self.lock:
             return await self._login_locked()
 
+    def cooldown_left(self) -> int:
+        """Seconds until another login attempt is allowed (survives restarts)."""
+        return max(0, int(self.db.get("ig_login_cooldown_until", 0) - time.time()))
+
     async def _login_locked(self) -> bool:
+        wait = self.cooldown_left()
+        if wait:
+            self.last_error = f"اینستاگرام موقتاً ورود رو محدود کرده؛ {wait // 60 + 1} دقیقه دیگه دوباره امتحان می‌کنم."
+            await self.notify(f"⏳ {self.last_error}")
+            return False
         try:
             await asyncio.to_thread(self._login_sync)
             await self.notify("✅ ورود به اینستاگرام انجام شد.")
@@ -134,6 +151,9 @@ class IGService:
             self.logged_in = False
             self.last_error = describe_error(exc)
             log.exception("Instagram login failed")
+            if isinstance(exc, THROTTLE_ERRORS):
+                # retrying right away makes the block longer, so back off
+                self.db.set("ig_login_cooldown_until", time.time() + LOGIN_COOLDOWN_SECONDS)
             await self.notify(f"❌ ورود به اینستاگرام ناموفق بود:\n{self.last_error}")
             return False
 
@@ -156,8 +176,10 @@ class IGService:
 def describe_error(exc: Exception) -> str:
     if isinstance(exc, BadPassword):
         return "رمز اشتباهه (یا اینستاگرام موقتاً ورود رو بسته)."
-    if isinstance(exc, (PleaseWaitFewMinutes,)):
-        return "اینستاگرام گفت چند دقیقه صبر کن. کمی بعد دوباره امتحان کن."
+    if isinstance(exc, THROTTLE_ERRORS):
+        return ("اینستاگرام درخواست‌های این سرور رو محدود کرده (Throttled / 429). "
+                f"ربات {LOGIN_COOLDOWN_SECONDS // 60} دقیقه صبر می‌کنه و بعد دوباره امتحان می‌کنه. "
+                "اگه تکرار شد، باید IG_PROXY (پراکسی residential) تنظیم بشه.")
     if isinstance(exc, FeedbackRequired):
         return "اینستاگرام این کار رو موقتاً محدود کرده (Feedback). چند ساعت دست نگه دار."
     if isinstance(exc, ChallengeRequired):
