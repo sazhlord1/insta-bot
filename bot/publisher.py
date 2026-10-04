@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import media_utils
+from . import collectors, media_utils
 from .config import Config
 from .db import DB
 from .ig import IGService, describe_error
@@ -51,10 +51,11 @@ class Publisher:
 
     async def _publish(self, item) -> bool:
         item_id = item["id"]
-        path = Path(item["file_path"])
-        if not path.exists():
-            self.db.set_status(item_id, "failed", error="file missing")
-            await self.notify(f"❌ فایل آیتم #{item_id} پیدا نشد.")
+        try:
+            path = await collectors.ensure_file(self.ig, self.db, item)
+        except Exception as exc:
+            self.db.set_status(item_id, "failed", error=str(exc)[:300])
+            await self.notify(f"❌ فایل آیتم #{item_id} پیدا نشد و دانلود دوباره هم نشد: {str(exc)[:200]}")
             return False
         self.db.set_status(item_id, "publishing")
         caption = self.db.caption().replace("{source}", item["source_label"] or "")

@@ -1,0 +1,24 @@
+# Render Blueprint: New → Blueprint → pick this repo
+services:
+  - type: web
+    name: insta-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: IG_USERNAME
+        sync: false
+      - key: IG_PASSWORD
+        sync: false
+      - key: DM_SENDER_USERNAME
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: IG_TOTP_SECRET
+        sync: false

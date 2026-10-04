@@ -2,7 +2,9 @@
 import asyncio
 import logging
 import re
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -69,7 +71,7 @@ HELP = """🤖 <b>راهنمای ربات</b>
 
 class BotApp:
     def __init__(self):
-        self.db = DB(Config.DB_PATH)
+        self.db = DB(Config.DB_PATH, Config.DATABASE_URL)
         self.app: Application = (
             ApplicationBuilder()
             .token(Config.TELEGRAM_BOT_TOKEN)
@@ -126,10 +128,10 @@ class BotApp:
         item = self.db.item(item_id)
         if not item:
             return
-        path = Path(item["file_path"])
         caption, markup = self._label(item), self._buttons(item)
         bot, chat = self.app.bot, Config.ADMIN_TELEGRAM_ID
         try:
+            path = await collectors.ensure_file(self.ig, self.db, item)
             if item["media_type"] == "photo":
                 with path.open("rb") as f:
                     await bot.send_photo(chat, f, caption=caption, reply_markup=markup)
@@ -431,7 +433,32 @@ class BotApp:
         self.app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
+class _Health(BaseHTTPRequestHandler):
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def do_HEAD(self):  # noqa: N802
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):  # keep logs quiet
+        pass
+
+
+def start_health_server(port: int) -> None:
+    """Hosts like Render need something listening on $PORT; an outside pinger
+    hitting this URL every few minutes also keeps a free instance awake."""
+    server = ThreadingHTTPServer(("0.0.0.0", port), _Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    log.info("Health server listening on port %s", port)
+
+
 def main() -> None:
+    if Config.PORT:
+        start_health_server(Config.PORT)
     BotApp().run()
 
 

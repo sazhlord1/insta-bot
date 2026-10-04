@@ -43,6 +43,12 @@ class Config:
     PUBLISH_GAP_SECONDS = _int("PUBLISH_GAP_SECONDS", 180)
     DAILY_PUBLISH_LIMIT = _int("DAILY_PUBLISH_LIMIT", 15)
 
+    # Database: Postgres URL (e.g. Supabase) for hosts without a persistent disk.
+    # Leave empty to use a local SQLite file in DATA_DIR.
+    DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+    # Hosts like Render give a PORT; the bot then answers health checks on it.
+    PORT = _int("PORT", 0)
+
     # Storage (mount a Railway volume at /data so data survives redeploys)
     DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
     MEDIA_DIR = DATA_DIR / "media"

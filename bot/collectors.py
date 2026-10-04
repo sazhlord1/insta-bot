@@ -175,7 +175,7 @@ async def fetch_youtube(db: DB, limit: int, report: Report) -> None:
                     report.add(f"• {label}: ویدیوی {int(duration)} ثانیه‌ای رد شد (طولانیه)")
                     continue
                 path = await asyncio.to_thread(media_utils.ensure_instagram_video, path)
-                item_id = db.add_item("reel", "source", label, vid, str(path), "video", "review")
+                item_id = db.add_item("reel", "source", label, vid, str(path), "video", "review", platform="youtube")
                 report.new_items.append(item_id)
         except Exception as exc:
             log.exception("YouTube failed for %s", label)
@@ -214,7 +214,8 @@ def _dm_candidates(m) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-def _dm_download(c, m) -> Optional[Path]:
+def _dm_download(c, m) -> Optional[tuple[Path, str]]:
+    """Returns (file, media_pk) for a reel/video in the message, else None."""
     url, ref = _dm_candidates(m)
     if url is None and ref is None:
         return None
@@ -225,7 +226,7 @@ def _dm_download(c, m) -> Optional[Path]:
             return None
         url, ref = str(info.video_url), str(info.pk)
     safe = re.sub(r"[^\w]", "_", ref)
-    return Path(c.video_download_by_url(url, filename=f"dm_{safe}", folder=Config.MEDIA_DIR))
+    return Path(c.video_download_by_url(url, filename=f"dm_{safe}", folder=Config.MEDIA_DIR)), ref
 
 
 async def poll_dm(ig: IGService, db: DB) -> list[int]:
@@ -261,18 +262,54 @@ async def poll_dm(ig: IGService, db: DB) -> list[int]:
         if not baseline_done:
             continue  # first run: ignore old history, only count new messages
         try:
-            path = await ig.run(_dm_download, m)
+            got = await ig.run(_dm_download, m)
         except Exception as exc:
             log.exception("DM download failed")
             await ig.notify(f"⚠️ یه پیام دایرکت دریافت شد ولی دانلودش نشد: {str(exc)[:200]}")
             continue
-        if path is None:
+        if got is None:
             continue  # plain text / photo etc.
+        path, media_pk = got
         path = await asyncio.to_thread(media_utils.ensure_instagram_video, path)
-        new_ids.append(db.add_item("reel", "dm", f"@{Config.DM_SENDER_USERNAME}", m.id,
+        new_ids.append(db.add_item("reel", "dm", f"@{Config.DM_SENDER_USERNAME}", media_pk,
                                    str(path), "video", "queued"))
     if not baseline_done:
         db.set("dm_baseline_done", True)
         await ig.notify(f"👀 دایرکت‌های @{Config.DM_SENDER_USERNAME} زیر نظره. "
                         "از این به بعد هر ریلزی بفرستی می‌ره توی صف.")
     return new_ids
+
+
+# ======================================================================
+# Re-download (hosts like Render free wipe files on every restart)
+# ======================================================================
+async def ensure_file(ig: IGService, db: DB, item) -> Path:
+    """Return the item's media file, downloading it again if it was wiped."""
+    path = Path(item["file_path"])
+    if path.exists():
+        return path
+    log.info("File for item %s is missing; downloading again", item["id"])
+    ext_id = item["ext_id"]
+    if item["platform"] == "youtube":
+        path, _ = await asyncio.to_thread(
+            _yt_download, f"https://www.youtube.com/watch?v={ext_id}", f"yt_{ext_id}")
+        if path is None:
+            raise RuntimeError("ویدیو یوتیوب دیگه در دسترس نیست.")
+    elif item["kind"] == "story":
+        def _story(c):
+            s = c.story_info(ext_id)
+            is_video = s.media_type == 2 and s.video_url
+            url = str(s.video_url if is_video else s.thumbnail_url)
+            return Path(c.story_download_by_url(url, filename=f"story_{ext_id}", folder=Config.MEDIA_DIR))
+        path = await ig.run(_story)
+    else:
+        def _reel(c):
+            info = c.media_info(ext_id)
+            if not info.video_url:
+                raise RuntimeError("ویدیو دیگه در دسترس نیست.")
+            return _download_video(c, str(info.video_url), f"ig_{ext_id}")
+        path = await ig.run(_reel)
+    if item["media_type"] == "video":
+        path = await asyncio.to_thread(media_utils.ensure_instagram_video, path)
+    db.set_file(item["id"], str(path))
+    return path
