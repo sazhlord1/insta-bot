@@ -13,6 +13,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote, unquote
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ DEFAULT_CAPTION = "🎬"
 class DB:
     def __init__(self, sqlite_path: Path, database_url: str = ""):
         self._lock = threading.Lock()
-        self._url = database_url
+        self._url = normalize_db_url(database_url) if database_url else ""
         self._sqlite_path = sqlite_path
         self.is_pg = bool(database_url)
         self._connect()
@@ -211,6 +212,24 @@ class DB:
     def stats(self) -> dict:
         rows = self._all("SELECT status, COUNT(*) AS n FROM items GROUP BY status")
         return {r["status"]: r["n"] for r in rows}
+
+
+def normalize_db_url(url: str) -> str:
+    """Make a pasted Postgres URL safe even if the password has special
+    characters like @ : / # (they must be percent-encoded in a URL).
+    Also removes [ ] left over from Supabase's [YOUR-PASSWORD] placeholder."""
+    url = url.strip().strip('"').strip("'")
+    scheme, sep, rest = url.partition("://")
+    if not sep or "@" not in rest:
+        return url
+    userinfo, _, hostpart = rest.rpartition("@")  # host never contains @
+    user, colon, password = userinfo.partition(":")
+    if not colon:
+        return url
+    if password.startswith("[") and password.endswith("]"):
+        password = password[1:-1]
+    password = quote(unquote(password), safe="")
+    return f"{scheme}://{user}:{password}@{hostpart}"
 
 
 def _is_connection_error(exc: Exception) -> bool:
