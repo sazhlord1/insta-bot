@@ -133,6 +133,33 @@ class IGService:
         async with self.lock:
             return await self._login_locked()
 
+    async def login_with_sessionid(self, sessionid: str) -> bool:
+        """Use a sessionid cookie copied from a browser where you're already
+        logged in. This skips Instagram's login endpoint entirely, so it works
+        even while logins are throttled (429)."""
+        async with self.lock:
+            def _do():
+                saved = self.db.get("ig_session") or {}
+                client = self._make_client({k: saved[k] for k in DEVICE_KEYS if k in saved})
+                client.login_by_sessionid(sessionid)
+                client.username, client.password = Config.IG_USERNAME, Config.IG_PASSWORD
+                return client
+
+            try:
+                client = await asyncio.to_thread(_do)
+            except Exception as exc:
+                log.exception("sessionid login failed")
+                self.last_error = describe_error(exc)
+                await self.notify(f"❌ ورود با sessionid نشد:\n{self.last_error}")
+                return False
+            self.client = client
+            self.logged_in = True
+            self.last_error = None
+            self.db.set("ig_session", client.get_settings())
+            self.db.set("ig_login_cooldown_until", 0)
+            await self.notify(f"✅ با sessionid وارد شدم (@{client.username}).")
+            return True
+
     def cooldown_left(self) -> int:
         """Seconds until another login attempt is allowed (survives restarts)."""
         return max(0, int(self.db.get("ig_login_cooldown_until", 0) - time.time()))

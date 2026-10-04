@@ -66,7 +66,8 @@ HELP = """🤖 <b>راهنمای ربات</b>
 /check_dm — چک فوری دایرکت — /dm off یا /dm on — خاموش/روشن کردن چک خودکار
 
 <b>اکانت</b>
-/status — وضعیت — /login — ورود دوباره — /code 123456 — فرستادن کد تأیید"""
+/status — وضعیت — /login — ورود دوباره — /code 123456 — فرستادن کد تأیید
+/session sessionid — ورود با کوکی مرورگر (وقتی اینستاگرام ورود رو محدود کرده)"""
 
 
 class BotApp:
@@ -163,6 +164,7 @@ class BotApp:
             "queue": self.cmd_queue, "publish": self.cmd_publish,
             "check_dm": self.cmd_check_dm, "dm": self.cmd_dm,
             "status": self.cmd_status, "login": self.cmd_login, "code": self.cmd_code,
+            "session": self.cmd_session,
         }
         for name, fn in cmds.items():
             self.app.add_handler(CommandHandler(name, fn, filters=admin))
@@ -419,6 +421,20 @@ class BotApp:
             await update.message.delete()  # don't leave the code lying in the chat
         except Exception:
             pass
+
+    async def cmd_session(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        raw = "".join(ctx.args or []).strip().strip('"').strip("'")
+        try:
+            await update.message.delete()  # the sessionid is as sensitive as a password
+        except Exception:
+            pass
+        sessionid = raw  # keep exactly as the browser shows it
+        if not re.match(r"^\d+(:|%3A)", sessionid, re.IGNORECASE) or len(sessionid) < 30:
+            return await self.notify(
+                "این sessionid درست به نظر نمی‌رسه. باید با عدد شروع بشه و بعدش «:» یا «%3A» داشته باشه.\n"
+                "مثال: /session 1234567890%3AabcDEF...")
+        await self.notify("🔐 دارم با sessionid وارد می‌شم... (پیامت رو برای امنیت پاک کردم)")
+        await self.ig.login_with_sessionid(sessionid)
 
     # ---------- housekeeping ----------
     async def login_retry_job(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
