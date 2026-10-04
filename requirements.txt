@@ -1,0 +1,4 @@
+python-telegram-bot[job-queue]==22.8
+instagrapi==3.0.20
+yt-dlp>=2026.8.19
+pyotp>=2.9.0
