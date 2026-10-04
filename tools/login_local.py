@@ -13,8 +13,9 @@ Nothing is sent anywhere except Instagram and your own database.
 """
 import getpass
 import json
+import os
 import sys
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 try:
     import psycopg
@@ -39,9 +40,25 @@ def normalize_db_url(url: str) -> str:
     return f"{scheme}://{user}:{quote(unquote(password), safe='')}@{hostpart}"
 
 
+def show_db_summary(url: str) -> None:
+    """Print what was understood from the URL, with the password masked,
+    so a bad paste is easy to spot."""
+    try:
+        u = urlsplit(url)
+        pw = unquote(u.password or "")
+        masked = (pw[0] + "*" * (len(pw) - 2) + pw[-1]) if len(pw) > 2 else "*" * len(pw)
+        print(f"\n  user:     {u.username}")
+        print(f"  host:     {u.hostname}:{u.port}")
+        print(f"  password: {masked}  ({len(pw)} characters)\n")
+    except Exception:
+        print("\n  (could not read the address - check that you pasted the whole thing)\n")
+
+
 def main() -> None:
     print("=== Instagram one-time login ===\n")
-    db_url = normalize_db_url(getpass.getpass("Paste your DATABASE_URL (hidden): "))
+    raw = os.getenv("DATABASE_URL") or input("Paste your DATABASE_URL and press Enter: ")
+    db_url = normalize_db_url(raw)
+    show_db_summary(db_url)
     username = input("Instagram page username: ").strip().lstrip("@")
     password = getpass.getpass("Instagram page password (hidden): ")
 
